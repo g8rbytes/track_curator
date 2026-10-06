@@ -13,7 +13,7 @@ One-time setup with [pipx](https://pipx.pypa.io), which gives the tool its own e
 
 ```
 brew install pipx && pipx ensurepath          # then open a new terminal
-pipx install "git+https://github.com/OWNER/track-curator.git"
+pipx install "git+https://github.com/g8rbytes/track_curator.git"
 pipx inject track-curator playwright           # only for --cart / --browser
 track-curator setup-browser                     # optional: bundled Chromium if Google Chrome isn't installed
 ```
@@ -28,7 +28,7 @@ pipx reinstall track-curator
 git install when the version number hasn't changed.)
 
 Pin or roll back to a specific commit or tag:
-`pipx install --force "git+https://github.com/OWNER/track-curator.git@<commit-or-tag>"`.
+`pipx install --force "git+https://github.com/g8rbytes/track_curator.git@<commit-or-tag>"`.
 
 For hacking on the code instead: `python3 -m venv .venv && source .venv/bin/activate && pip install -e '.[browser,dev]'`.
 
