@@ -1,0 +1,212 @@
+"""Command line entry point.
+
+  track-curator run "[LUMBERJVCK's Deep Cuts, 1-20]" "[Dirtyphonics @ Rampage Open Air 2026]"
+  track-curator run -f sets.txt --cart
+  track-curator tracklist "[Dirtyphonics @ Rampage Open Air 2026]"   # just print the tracklist
+  track-curator cart ~/TrackCurator/<run>/result.json                  # fill the Beatport cart later
+  track-curator gates ~/TrackCurator/<run>/result.json                 # open free-download gates
+  track-curator report ~/TrackCurator/<run>/result.json                # rebuild the report page
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+import webbrowser
+from pathlib import Path
+
+from .http import Http
+from .inputs import parse_requests
+from .models import BeatportMatch
+from .textmatch import slugify
+
+
+def _out_dir(base: Path, reqs) -> Path:
+    name = slugify(" + ".join(r.query or (r.url or r.url_1001 or "") for r in reqs))[:60]
+    return base / f"{time.strftime('%Y%m%d-%H%M')}-{name}"
+
+
+def cmd_run(a) -> int:
+    from .pipeline import Curator, Options
+    from .report import write_all
+
+    lines = list(a.requests)
+    if a.file:
+        lines += Path(a.file).read_text().splitlines()
+    reqs = parse_requests(lines)
+    if not reqs:
+        print("Nothing to do: give a request like \"[Dirtyphonics @ Rampage Open Air 2026]\"", file=sys.stderr)
+        return 2
+    if a.tracklist_url:
+        reqs[0].url_1001 = a.tracklist_url
+    out = Path(a.out).expanduser() if a.out else _out_dir(Path(a.base).expanduser(), reqs)
+    opts = Options(
+        out_dir=out,
+        download=not a.no_download,
+        beatport=not a.no_beatport,
+        use_1001=not a.no_1001,
+        browser=a.browser,
+        include_layers=not a.skip_layers,
+    )
+    cur = Curator(opts, http=Http(offline=a.offline))
+    result = cur.run(reqs)
+    if a.cart:
+        _cart([t.beatport for t in result.tracks if t.beatport])
+    paths = write_all(result, out)
+    counts: dict[str, int] = {}
+    for t in result.tracks:
+        counts[t.status] = counts.get(t.status, 0) + 1
+    print("\nDone:", ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
+    print(f"Report: {paths['html']}")
+    if not a.no_open:
+        webbrowser.open(paths["html"].as_uri())
+    return 0
+
+
+def cmd_tracklist(a) -> int:
+    from .pipeline import Curator, Options
+
+    reqs = parse_requests(a.requests)
+    cur = Curator(Options(out_dir=Path("."), download=False, beatport=False, browser=a.browser), log=lambda s: print(s, file=sys.stderr))
+    for req in reqs:
+        for ep in cur.episodes(req):
+            cur.fill_tracklist(ep, req)
+            print(f"\n## {ep.label}  [{ep.tracklist_source}]")
+            for t in ep.tracks:
+                print(f"{'  w/' if t.is_layer else f'{t.position:>3}.'} {t.display}{'  (ID)' if t.is_id else ''}")
+    return 0
+
+
+def _load(path: str) -> dict:
+    return json.loads(Path(path).expanduser().read_text())
+
+
+def _cart(matches: list[BeatportMatch]) -> None:
+    from .beatport import fill_cart
+    from .browser import Browser
+
+    if not matches:
+        print("No Beatport matches to add.")
+        return
+    b = Browser()
+    try:
+        fill_cart(matches, b)
+    finally:
+        b.close()
+
+
+def cmd_cart(a) -> int:
+    data = _load(a.result)
+    matches = [BeatportMatch(**t["beatport"]) for t in data["tracks"] if t.get("beatport")]
+    if a.only:
+        keep = {int(x) for x in a.only.split(",")}
+        matches = [m for m in matches if m.track_id in keep]
+    _cart(matches)
+    return 0
+
+
+def cmd_login(a) -> int:
+    import shutil
+
+    from .browser import Browser
+    from .http import DEFAULT_HOME
+
+    if a.reset:
+        shutil.rmtree(DEFAULT_HOME / "browser", ignore_errors=True)
+        print("Cleared the saved browser profile.")
+    b = Browser()
+    try:
+        b.page.goto("https://www.beatport.com/", wait_until="domcontentloaded")
+        input("Log in to Beatport in the browser window, then press Enter here to save the login... ")
+    finally:
+        b.close()
+    return 0
+
+
+def cmd_report(a) -> int:
+    from .report import load_result, render_html
+
+    src = Path(a.result).expanduser().resolve()
+    out = src.with_name("report.html")
+    out.write_text(render_html(load_result(src), str(src)))
+    print(f"Report: {out}")
+    webbrowser.open(out.as_uri())
+    return 0
+
+
+def cmd_gates(a) -> int:
+    data = _load(a.result)
+    gates = [t for t in data["tracks"] if (t.get("free_download") or {}).get("kind") == "gate"]
+    if not gates:
+        print("No gated free downloads in this run.")
+        return 0
+    print(f"Opening {len(gates)} free-download pages. Finish each one in your browser; files land in your Downloads folder.")
+    for t in gates:
+        e = t["entry"]
+        print(f"  {e['artist']} - {e['title']}: {t['free_download']['url']}")
+        webbrowser.open_new_tab(t["free_download"]["url"])
+        if a.pause:
+            input("    Enter for the next one... ")
+    return 0
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(prog="track-curator", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    r = sub.add_parser("run", help="tracklists -> free downloads -> Beatport list")
+    r.add_argument("requests", nargs="*", help='e.g. "[LUMBERJVCK\'s Deep Cuts, 1-20]"')
+    r.add_argument("-f", "--file", help="file with one request per line")
+    r.add_argument("--tracklist-url", help="use this 1001Tracklists page for the (single) request")
+    r.add_argument("--base", default="~/TrackCurator", help="where run folders go (default ~/TrackCurator)")
+    r.add_argument("--out", help="exact output folder")
+    r.add_argument("--cart", action="store_true", help="add Beatport matches to your cart in a browser window")
+    r.add_argument("--browser", action="store_true", help="use a browser window when a site shows a bot check")
+    r.add_argument("--no-download", action="store_true")
+    r.add_argument("--no-beatport", action="store_true")
+    r.add_argument("--no-1001", action="store_true")
+    r.add_argument("--skip-layers", action="store_true", help="ignore w/ layered tracks")
+    r.add_argument("--offline", action="store_true", help="only use cached pages")
+    r.add_argument("--no-open", action="store_true", help="don't open the report when done")
+    r.set_defaults(fn=cmd_run)
+
+    t = sub.add_parser("tracklist", help="print the tracklist(s) only")
+    t.add_argument("requests", nargs="+")
+    t.add_argument("--browser", action="store_true")
+    t.set_defaults(fn=cmd_tracklist)
+
+    c = sub.add_parser("cart", help="add a run's Beatport matches to your cart")
+    c.add_argument("result", help="path to a run's result.json")
+    c.add_argument("--only", help="comma-separated Beatport track ids to add")
+    c.set_defaults(fn=cmd_cart)
+
+    lg = sub.add_parser("login", help="log in to Beatport once in the cart browser")
+    lg.add_argument("--reset", action="store_true", help="forget the saved browser profile first")
+    lg.set_defaults(fn=cmd_login)
+
+    rp = sub.add_parser("report", help="rebuild a run's report.html from its result.json")
+    rp.add_argument("result")
+    rp.set_defaults(fn=cmd_report)
+
+    g = sub.add_parser("gates", help="open a run's gated free downloads in your browser")
+    g.add_argument("result")
+    g.add_argument("--pause", action="store_true", help="wait for Enter between pages")
+    g.set_defaults(fn=cmd_gates)
+
+    a = p.parse_args(argv)
+    try:
+        return a.fn(a)
+    except KeyboardInterrupt:
+        return 130
+    except Exception as e:  # keep the CLI readable; full trace with TRACK_CURATOR_DEBUG=1
+        import os
+
+        if os.environ.get("TRACK_CURATOR_DEBUG"):
+            raise
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
