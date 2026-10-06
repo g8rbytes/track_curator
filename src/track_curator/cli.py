@@ -124,6 +124,12 @@ def cmd_login(a) -> int:
     return 0
 
 
+def cmd_setup_browser(a) -> int:
+    import subprocess
+
+    return subprocess.call([sys.executable, "-m", "playwright", "install", "chromium"])
+
+
 def cmd_report(a) -> int:
     from .report import load_result, render_html
 
@@ -184,6 +190,9 @@ def main(argv=None) -> int:
     lg = sub.add_parser("login", help="log in to Beatport once in the cart browser")
     lg.add_argument("--reset", action="store_true", help="forget the saved browser profile first")
     lg.set_defaults(fn=cmd_login)
+
+    sb = sub.add_parser("setup-browser", help="download Playwright's Chromium (only needed without Google Chrome)")
+    sb.set_defaults(fn=cmd_setup_browser)
 
     rp = sub.add_parser("report", help="rebuild a run's report.html from its result.json")
     rp.add_argument("result")

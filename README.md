@@ -8,12 +8,29 @@ track-curator run "[LUMBERJVCK's Deep Cuts, 1-20]" "[Dirtyphonics @ Rampage Open
 
 ## Install (macOS)
 
+One-time setup with [pipx](https://pipx.pypa.io), which gives the tool its own environment and puts
+`track-curator` on your PATH in every terminal (no venv to activate):
+
 ```
-cd track-curator
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e '.[browser]'
-playwright install chromium     # only needed for --cart and --browser
+brew install pipx && pipx ensurepath          # then open a new terminal
+pipx install "git+https://github.com/OWNER/track-curator.git"
+pipx inject track-curator playwright           # only for --cart / --browser
+track-curator setup-browser                     # optional: bundled Chromium if Google Chrome isn't installed
 ```
+
+Update to the latest version:
+
+```
+pipx reinstall track-curator
+```
+
+(`reinstall` always pulls the latest commit and keeps the injected Playwright; `pipx upgrade` can skip a
+git install when the version number hasn't changed.)
+
+Pin or roll back to a specific commit or tag:
+`pipx install --force "git+https://github.com/OWNER/track-curator.git@<commit-or-tag>"`.
+
+For hacking on the code instead: `python3 -m venv .venv && source .venv/bin/activate && pip install -e '.[browser,dev]'`.
 
 ## What a run does
 
