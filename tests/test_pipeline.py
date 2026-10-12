@@ -82,6 +82,11 @@ def test_end_to_end(tmp_path: Path):
     assert '"cart_name": "lumberjvck_deep_cuts_7"' in paths["json"].read_text()
     assert "Paid One" in paths["csv"].read_text().splitlines()[3] and "06:20" in paths["csv"].read_text()
     assert (tmp_path / "downloads" / "Alpha - Free Thing.wav").exists()
+    free = page[page.index("<h2 id='free'>"):]  # every free download, listed once under the table
+    assert "Free downloads (2)" in free and "href='#free'" in page
+    assert 'href="https://hypeddit.com/b/g"' in free and "Beta - Gated" in free and "free behind a gate" in free
+    assert "Alpha - Free Thing" in free and "downloaded: Alpha - Free Thing.wav" in free
+    assert "Gamma - Paid One" not in free
 
 
 def test_merge_prefers_fewer_ids():

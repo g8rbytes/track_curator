@@ -91,6 +91,33 @@ def _row(t: CuratedTrack) -> str:
     )
 
 
+def _free_list(tracks: list[CuratedTrack]) -> tuple[int, str]:
+    """Every free download in one list, in tracklist order, each with the link from its table row."""
+    items = []
+    for t in tracks:
+        fd = t.free_download
+        if not fd:
+            continue
+        name = html.escape(t.entry.display)
+        if fd.local_path:
+            p = Path(fd.local_path)
+            items.append(f"<li>{_a(p.resolve().as_uri(), t.entry.display)} <span class='m'>downloaded: "
+                         f"{html.escape(p.name)}</span></li>")
+        elif fd.url:
+            how = "free behind a gate" if fd.kind == "gate" else "free download"
+            items.append(f"<li>{_a(fd.url, t.entry.display)} <span class='m'>{html.escape(fd.host)} · {how}"
+                         f"{' · ' + html.escape(fd.error) if fd.error else ''}</span></li>")
+        else:
+            items.append(f"<li>{name} <span class='m'>no link found</span></li>")
+    if not items:
+        return 0, ""
+    return len(items), (
+        f"<h2 id='free'>Free downloads ({len(items)})</h2>"
+        "<p class='hint'>Each link opens in a new tab and turns grey once you've opened it.</p>"
+        f"<ol class='free'>{''.join(items)}</ol>"
+    )
+
+
 def render_html(result: RunResult, result_path: str = "") -> str:
     counts: dict[str, int] = {}
     for t in result.tracks:
@@ -105,6 +132,9 @@ def render_html(result: RunResult, result_path: str = "") -> str:
     )
     rows = "".join(_row(t) for t in result.tracks)
     cart = (f"<p>Beatport cart: <strong>{html.escape(result.cart_name)}</strong></p>" if result.cart_name else "")
+    n_free, free = _free_list(result.tracks)
+    if n_free:
+        cart += f"<p><a href='#free'>Free downloads ({n_free})</a>: all in one list at the bottom</p>"
     return f"""<!doctype html><html><head><meta charset="utf-8"><title>Track Curator report</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
@@ -117,6 +147,7 @@ th{{position:sticky;top:0;background:var(--bg)}}a{{color:var(--bp)}}.ok{{color:v
 .bar{{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:12px 0}}button{{font:inherit;padding:6px 12px}}
 .wrap{{overflow-x:auto}}.hint{{color:var(--muted);margin:0 0 12px}}
 .m{{color:var(--muted);font-size:12px}}.ts{{white-space:nowrap;font-variant-numeric:tabular-nums}}
+.free{{line-height:1.9}}.free a:visited{{color:var(--muted)}}
 </style></head><body>
 <h1>Track Curator report</h1><p>{html.escape(summary)}</p>{cart}<ul>{eps}</ul>
 <div class="bar"><button onclick="copyCart()">Copy cart command</button>
@@ -127,6 +158,7 @@ th{{position:sticky;top:0;background:var(--bg)}}a{{color:var(--bp)}}.ok{{color:v
 <p class="hint">Uncheck what you don't want, then "Copy cart command" and paste it in Terminal to add the rest to your Beatport cart.</p>
 <div class="wrap"><table><thead><tr><th>Set</th><th>#</th><th>Time</th><th>Artist</th><th>Title</th><th>Status</th><th>Links</th><th>Beatport match</th><th>Notes</th></tr></thead>
 <tbody>{rows}</tbody></table></div>
+{free}
 <script>
 const sel=()=>[...document.querySelectorAll('input.bp:checked')];
 function tot(){{let s=0,c='';for(const i of sel()){{const m=(i.dataset.price||'').match(/([^\\d]*)([\\d.,]+)/);if(m){{c=c||m[1];s+=parseFloat(m[2].replace(',','.'))}}}}

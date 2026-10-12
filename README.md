@@ -69,6 +69,8 @@ For hacking on the code instead: `python3 -m venv .venv && source .venv/bin/acti
    to glance at the window before adding, and stays your default cart afterwards.
 
 Output goes to `~/TrackCurator/<date>-<name>/`: `report.html`, `tracks.csv`, `result.json`, `downloads/`.
+The report ends with every free download in one list of links, for clicking through gates quickly.
+`track-curator report <run>/result.json` rebuilds an older run's report with the current layout.
 
 ## Useful flags
 
