@@ -1,4 +1,4 @@
-"""Normalisation and fuzzy matching helpers shared by every source."""
+"""Normalisation helpers and the loose name matching used for shows, sets and tracklist pages."""
 from __future__ import annotations
 
 import re
@@ -35,45 +35,12 @@ def normalize(s: str) -> str:
 
 
 def similarity(a: str, b: str) -> float:
-    """0..100. Order-insensitive token match, robust to extra words."""
+    """0..100, order-insensitive and tolerant of extra words. For show and set names;
+    tracks go through matching.judge, which is strict."""
     na, nb = normalize(a), normalize(b)
     if not na or not nb:
         return 0.0
     return max(fuzz.token_set_ratio(na, nb) * 0.9, fuzz.token_sort_ratio(na, nb))
-
-
-def track_score(want_artist: str, want_title: str, got_artist: str, got_title: str) -> float:
-    """Score a candidate track against a tracklist entry (0..100).
-
-    Title matters most; the artist is checked against both the artist field and the
-    candidate title, because SoundCloud uploads often read "Artist - Title" under a
-    label's account.
-    """
-    title_s = similarity(want_title, got_title)
-    # Remix info must agree: "X (Y Remix)" should not match plain "X".
-    rw, rg = _remixer(want_title), _remixer(got_title)
-    if rw != rg and (rw or rg):
-        title_s -= 25
-    if want_artist:
-        artist_s = max(
-            similarity(want_artist, got_artist),
-            fuzz.partial_ratio(normalize(want_artist), normalize(got_title)) if got_title else 0,
-        )
-    else:
-        artist_s = 50
-    return round(0.65 * title_s + 0.35 * artist_s, 1)
-
-
-_REMIX = re.compile(r"[\(\[]([^\)\]]*?)\s+(remix|flip|bootleg|edit|vip|rework|refix)[\)\]]", re.I)
-
-
-def _remixer(title: str) -> str:
-    m = _REMIX.search(norm_dashes(title))
-    if not m:
-        if re.search(r"\bvip\b", title, re.I):
-            return "vip"
-        return ""
-    return normalize(m.group(1) + " " + m.group(2))
 
 
 def slugify(s: str) -> str:

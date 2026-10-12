@@ -1,3 +1,5 @@
+import json
+
 from track_curator.beatport import tracks_from_next_data
 from track_curator.episodes import episode_number
 from track_curator.freedl import find_free_download
@@ -101,9 +103,43 @@ def test_pick_tracklist():
 
 
 def test_beatport_next_data():
-    html = """<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"dehydratedState":
-    {"queries":[{"state":{"data":{"data":[{"track_id":123,"track_name":"Bad Habit","mix_name":"Original Mix",
-    "artists":[{"artist_name":"LUMBERJVCK"}],"label":{"label_name":"Disciple"},"price":{"display":"$1.49"}}]}}}]}}}}</script>"""
+    other = {"queryKey": ["trending"], "state": {"data": {"data": [{"track_id": 7, "track_name": "Elsewhere",
+             "mix_name": "Original Mix", "artists": []}]}}}
+    search = {"queryKey": ["search-tracks", {"q": "lumberjvck bad habit"}, "US"], "state": {"data": {"data": [
+        {"track_id": 123, "track_name": "Bad Habit", "mix_name": "Original Mix",
+         "artists": [{"artist_name": "LUMBERJVCK", "artist_type_name": "Artist"}],
+         "label": {"label_name": "Disciple"}, "price": {"display": "$1.49"}},
+        {"track_id": 124, "track_name": "Bad Habit (Getter Remix)", "mix_name": "Getter Remix",
+         "artists": [{"artist_name": "LUMBERJVCK", "artist_type_name": "Artist"},
+                     {"artist_name": "Getter", "artist_type_name": "Remixer"}]}]}}}
+    html = ('<script id="__NEXT_DATA__" type="application/json">'
+            + json.dumps({"props": {"pageProps": {"dehydratedState": {"queries": [other, search]}}}}) + "</script>")
     t = tracks_from_next_data(html)
-    assert t == [{"id": 123, "name": "Bad Habit", "mix": "Original Mix", "artists": "LUMBERJVCK", "remixers": "",
-                  "label": "Disciple", "price": "$1.49", "slug": "bad-habit"}]
+    assert [x["id"] for x in t] == [123, 124]  # only the search results, in page order
+    assert t[0] == {"id": 123, "name": "Bad Habit", "mix": "Original Mix", "artists": ["LUMBERJVCK"], "remixers": [],
+                    "label": "Disciple", "price": "$1.49", "slug": "bad-habit"}
+    assert t[1]["artists"] == ["LUMBERJVCK"] and t[1]["remixers"] == ["Getter"]
+
+
+def test_timestamps_are_kept_out_of_titles():
+    t = parse_tracklist("""TRACKLIST:
+1. Vincent, KnownAsNat - Stereo Love 00:00:00
+2. Sean Paul - Temperature (LUMBERJVCK FLIP) 00:02:03
+[00:05] Zero - Gotta Be Tuff
+4. [00:07:07] D!lemma - Luigi's Mansion
+5. Kercha - Forbidden Truth [00:42:39] [DISCIPLE]
+6. LUMBERJVCK, Odd Language - ID 00:34:20
+7. Eddington Again - 03:00
+8. Arya - INSIDEOUT - 26:05
+""")
+    assert [(e.artist, e.title, e.timestamp) for e in t] == [
+        ("Vincent, KnownAsNat", "Stereo Love", "00:00:00"),
+        ("Sean Paul", "Temperature (LUMBERJVCK FLIP)", "00:02:03"),
+        ("Zero", "Gotta Be Tuff", "00:05"),
+        ("D!lemma", "Luigi's Mansion", "00:07:07"),
+        ("Kercha", "Forbidden Truth", "00:42:39"),
+        ("LUMBERJVCK, Odd Language", "ID", "00:34:20"),
+        ("Eddington Again", "03:00", ""),  # a track really called "03:00" keeps its name
+        ("Arya", "INSIDEOUT", "26:05"),
+    ]
+    assert t[5].is_id

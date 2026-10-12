@@ -40,18 +40,32 @@ For hacking on the code instead: `python3 -m venv .venv && source .venv/bin/acti
    upload. A SoundCloud URL works too.
 2. **Read "Behind this track".** A tracklist is taken from the description when it has a
    `Tracklist`/`Playlist`/`TL` header (fuzzy) or at least 3 numbered/timestamped `Artist - Title` lines.
-   `w/` lines are kept as layered tracks; `ID - ID`, `ID`, `??`, `TBA` count as IDs.
+   `w/` lines are kept as layered tracks; `ID - ID`, `ID`, `??`, `TBA` count as IDs. Cue times
+   (`00:03:04`, `[1:02:03]`, `(03:04)`, at the start or end of a line) are moved into the report's
+   **Time** column and are never part of a title or a search.
 3. **Fall back to 1001Tracklists** when there is no tracklist or more than 50% of it is IDs. When
    both exist, the list with fewer IDs is the base and the other adds anything it is missing.
-4. **Free downloads.** Each identified track is looked up on SoundCloud:
+4. **Free downloads.** Each identified track is looked up on SoundCloud (same matching rules as
+   Beatport below; long uploads such as the mix itself are skipped):
    - SoundCloud's own download button enabled -> downloaded.
    - "Free download" link to Dropbox / Google Drive / a direct file -> downloaded.
    - Link to a gate (Hypeddit, ToneDen, Bandcamp name-your-price...) -> listed as **Free behind a
      gate**. `track-curator gates <run>/result.json` opens them in your browser to click through.
-5. **Beatport.** Everything else is matched on Beatport (remix names must agree) and listed in the
-   report with checkboxes, a running total, and "open checked" / "copy checked links" buttons.
-   `--cart` (or `track-curator cart <run>/result.json --only 123,456`) opens a browser window,
-   lets you log in once, and presses add-to-cart on each track.
+5. **Beatport.** Everything else is searched on Beatport by artist + title (+ remixer), and only
+   the first 10 results are checked. A result is accepted only when it is the same recording:
+   - the titles (without versions, features and tags) are at least 85% alike and their numbers agree;
+   - at least one artist on the tracklist line is credited on it;
+   - a remix/flip/bootleg/edit has its remixer on it, named in the mix name (preferred) or
+     credited as an artist; a line with no version rejects other people's remixes and
+     VIP/instrumental/live versions; VIP and instrumental must agree both ways.
+
+   When several pass, Extended Mix beats Original Mix. The report shows the Beatport track
+   that was picked and why, and for misses the closest result and why it was rejected.
+6. **Cart.** `--cart` (or `track-curator cart <run>/result.json --only 123,456`) opens a browser
+   window, lets you log in once, creates (or reuses) a Beatport cart named after your request and
+   makes it your default cart, then presses each track's Buy button so it lands in that cart.
+   `"[LUMBERJVCK's Deep Cuts, 18-18]"` gives the cart `lumberjvcks_deep_cuts_18_18`. It asks you
+   to glance at the window before adding, and stays your default cart afterwards.
 
 Output goes to `~/TrackCurator/<date>-<name>/`: `report.html`, `tracks.csv`, `result.json`, `downloads/`.
 
@@ -59,6 +73,9 @@ Output goes to `~/TrackCurator/<date>-<name>/`: `report.html`, `tracks.csv`, `re
 
 | flag | effect |
 |---|---|
+| `--cart` | add the Beatport matches to a cart named after the request |
+| `--cart-name NAME` | use this cart name instead (also on `track-curator cart`) |
+| `--default-cart` | add to whatever cart is your default instead of a named one |
 | `--browser` | use a real browser window if 1001Tracklists shows a bot check (solve it once) |
 | `--tracklist-url URL` | use this 1001Tracklists page instead of searching |
 | `-f sets.txt` | one request per line |
@@ -70,8 +87,11 @@ Output goes to `~/TrackCurator/<date>-<name>/`: `report.html`, `tracks.csv`, `re
 
 - Site layouts change. The SoundCloud part uses the same API soundcloud.com itself uses; the
   1001Tracklists and Beatport parsers read page structure and are the likeliest to need a tweak.
-- Beatport has no public cart API, so the cart step clicks the button on each track page. If
-  Beatport renames the button, update `CART_BUTTONS` in `src/track_curator/beatport.py`.
+- Beatport has no public cart API, so the cart step clicks through Cart Preferences and the Buy
+  button on each track page. If a control can't be found it asks you to do that one step in the
+  window and saves the page's button labels and a screenshot as `beatport-cart-page.json`/`.png`
+  in the run folder (labels only, no cookies). If Beatport renames the Buy button, update
+  `CART_BUTTONS` in `src/track_curator/beatport.py`.
 - Download gates are opened for you to finish, not completed automatically.
 
 Run the offline tests with `pip install -e '.[dev]' && pytest`.

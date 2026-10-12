@@ -10,15 +10,15 @@ from .episodes import find_series, find_set
 from .freedl import beatport_link, find_free_download
 from .http import Blocked, Http
 from .inputs import Request
+from .matching import MAX_RESULTS, is_mix_upload, parse_spec, rank, search_queries, soundcloud_candidates
 from .models import CuratedTrack, Episode, TrackEntry
 from .progress import Progress
-from .soundcloud import SoundCloud, track_artist, track_title
-from .textmatch import normalize, similarity, track_score
+from .soundcloud import SoundCloud
+from .textmatch import normalize, similarity
 from .tracklist_parser import id_ratio, parse_tracklist
 from .tracklists1001 import Tracklists1001
 
 ID_THRESHOLD = 0.5  # more IDs than this on SoundCloud -> also ask 1001Tracklists
-SC_MATCH = 75
 
 
 @dataclass
@@ -35,6 +35,8 @@ class Options:
 class RunResult:
     episodes: list[Episode] = field(default_factory=list)
     tracks: list[CuratedTrack] = field(default_factory=list)
+    requests: list[str] = field(default_factory=list)  # what was asked for, as typed
+    cart_name: str = ""  # the Beatport cart this run's matches go in
 
 
 def merge_tracklists(sc: list[TrackEntry], tl: list[TrackEntry]) -> list[TrackEntry]:
@@ -112,15 +114,16 @@ class Curator:
         self.log(f"  {ep.label}: {len(ep.tracks)} tracks ({ids} IDs) from {ep.tracklist_source}")
 
     # -- step 3+4: per-track work --------------------------------------------------
-    def curate(self, entry: TrackEntry, episode: str) -> CuratedTrack:
-        ct = CuratedTrack(entry=entry, episode=episode)
+    def curate(self, entry: TrackEntry, episode: Episode) -> CuratedTrack:
+        ct = CuratedTrack(entry=entry, episode=episode.label)
         if entry.is_id:
             ct.status = "id"
             return ct
-        sc_track = self._find_on_soundcloud(entry)
+        sc_track = self._find_on_soundcloud(entry, ct, exclude=episode.soundcloud_url)
         bp_hint = None
         if sc_track:
             ct.soundcloud_url = sc_track.get("permalink_url", "")
+            ct.soundcloud_title = f"{(sc_track.get('user') or {}).get('username', '')}: {sc_track.get('title', '')}"
             fd = find_free_download(sc_track)
             bp_hint = beatport_link(sc_track)
             if fd:
@@ -132,7 +135,9 @@ class Curator:
                     return ct
         if self.opts.beatport:
             try:
-                ct.beatport = self.bp.match(entry, bp_hint)
+                ct.beatport, why = self.bp.match(entry, bp_hint)
+                if why:
+                    ct.notes.append(why)
             except Exception as e:
                 ct.notes.append(f"Beatport search failed: {e}")
             if ct.beatport:
@@ -141,22 +146,28 @@ class Curator:
         ct.status = "free" if ct.free_download else "not_found"
         return ct
 
-    def _find_on_soundcloud(self, e: TrackEntry) -> Optional[dict]:
-        best, best_s = None, 0.0
-        try:
-            hits = self.sc.search_tracks(e.query, limit=10)
-        except Exception as ex:
-            self.log(f"  ! SoundCloud search failed for {e.display}: {ex}")
-            return None
-        for t in hits:
-            uploader = (t.get("user") or {}).get("username", "")
-            s = max(
-                track_score(e.artist, e.title, track_artist(t), track_title(t)),
-                track_score(e.artist, e.title, uploader, t.get("title", "")),
-            )
-            if s > best_s:
-                best, best_s = t, s
-        return best if best_s >= SC_MATCH else None
+    def _find_on_soundcloud(self, e: TrackEntry, ct: CuratedTrack, exclude: str = "") -> Optional[dict]:
+        """The SoundCloud upload of exactly this track, preferring one that is a free download."""
+        spec = parse_spec(e.artist, e.title)
+        for q in search_queries(spec, "soundcloud"):
+            try:
+                hits = self.sc.search_tracks(q, limit=MAX_RESULTS)
+            except Exception as ex:
+                self.log(f"  ! SoundCloud search failed for {e.display}: {ex}")
+                return None
+            cands = [
+                c
+                for i, t in enumerate(hits[:MAX_RESULTS])
+                if t.get("permalink_url") != exclude and not is_mix_upload(t)
+                for c in soundcloud_candidates(t, i)
+            ]
+            accepted, _ = rank(spec, cands)
+            if accepted:
+                free = [cv for cv in accepted if find_free_download(cv[0].raw)]
+                c, v = (free or accepted)[0]
+                ct.soundcloud_score = round(v.score, 1)
+                return c.raw
+        return None
 
     def _download(self, ct: CuratedTrack, sc_track: dict) -> None:
         fd = ct.free_download
@@ -174,8 +185,8 @@ class Curator:
             self.log(f"  ! download failed for {ct.entry.display}: {fd.error}")
 
     # -- everything ----------------------------------------------------------------
-    def run(self, requests: list[Request]) -> RunResult:
-        result = RunResult()
+    def run(self, requests: list[Request], raw: Optional[list[str]] = None, cart_name: str = "") -> RunResult:
+        result = RunResult(requests=list(raw or []), cart_name=cart_name)
         for req in requests:
             for ep in self.episodes(req):
                 self.fill_tracklist(ep, req)
@@ -190,7 +201,7 @@ class Curator:
                 seen[k].notes.append(f"also in {ep.label}")
                 progress.step("duplicate", e.display)
                 continue
-            ct = self.curate(e, ep.label)
+            ct = self.curate(e, ep)
             result.tracks.append(ct)
             if not e.is_id:
                 seen[k] = ct

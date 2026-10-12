@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Optional
 
 
@@ -15,10 +15,7 @@ class TrackEntry:
     is_id: bool = False
     is_layer: bool = False  # "w/" lines played on top of the previous track
     source: str = ""  # "soundcloud" | "1001tracklists"
-
-    @property
-    def query(self) -> str:
-        return f"{self.artist} {self.title}".strip()
+    timestamp: str = ""  # cue time in the mix, for the report only (never searched for)
 
     @property
     def display(self) -> str:
@@ -48,6 +45,12 @@ class BeatportMatch:
     score: float = 0.0
     in_cart: bool = False
     cart_error: Optional[str] = None
+    reason: str = ""  # why this result was accepted, e.g. "title 100 · artists 2/2 · remixer in mix name"
+    query: str = ""  # the Beatport search that found it
+
+    @property
+    def display(self) -> str:
+        return f"{self.artists} - {self.name}" + (f" ({self.mix})" if self.mix else "")
 
 
 @dataclass
@@ -55,6 +58,7 @@ class CuratedTrack:
     entry: TrackEntry
     episode: str
     soundcloud_url: str = ""
+    soundcloud_title: str = ""  # the upload we matched, as "uploader: title"
     soundcloud_score: float = 0.0
     free_download: Optional[FreeDownload] = None
     beatport: Optional[BeatportMatch] = None
@@ -63,6 +67,12 @@ class CuratedTrack:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def from_dict(cls, d: dict) -> Any:
+    """Build a dataclass from a result.json dict, ignoring keys this version doesn't know."""
+    names = {f.name for f in fields(cls)}
+    return cls(**{k: v for k, v in d.items() if k in names})
 
 
 @dataclass

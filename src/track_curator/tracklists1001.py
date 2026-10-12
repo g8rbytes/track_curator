@@ -14,8 +14,8 @@ from bs4 import BeautifulSoup
 
 from .http import Blocked, Http
 from .models import TrackEntry
-from .textmatch import normalize, similarity
-from .tracklist_parser import is_id_text, parse_tracklist, split_artist_title
+from .textmatch import similarity
+from .tracklist_parser import is_id_text, parse_tracklist, split_artist_title, strip_timestamps
 
 BASE = "https://www.1001tracklists.com"
 MATCH = 65
@@ -130,7 +130,7 @@ def parse_tracklist_page(html: str) -> list[TrackEntry]:
         if not name:
             tv = row.select_one(".trackValue")
             name = tv.get_text(" ", strip=True) if tv else ""
-        name = re.sub(r"\s+", " ", name).strip()
+        name, ts = strip_timestamps(re.sub(r"\s+", " ", name).strip())
         if not name:
             continue
         num_el = row.select_one("[id$='_tracknumber_value'], .fontXL, .trackNumber")
@@ -152,6 +152,7 @@ def parse_tracklist_page(html: str) -> list[TrackEntry]:
                 is_id=is_id_text(title) or (artist.upper() == "ID" and is_id_text(title)),
                 is_layer=layer,
                 source="1001tracklists",
+                timestamp=ts,
             )
         )
     if not entries:  # page layout changed: fall back to the text parser

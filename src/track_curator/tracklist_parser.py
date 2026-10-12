@@ -7,10 +7,13 @@ Deterministic rules:
      always accepted; un-numbered "Artist - Title" lines are only accepted after a header.
   3. "w/" lines are layers on the previous track. Lines whose title or artist is "ID" are IDs.
   4. We need at least MIN_TRACKS track lines to call it a tracklist.
+  5. Cue times ("00:03:04", "[1:02:03]", "(03:04)") are taken out of the line wherever they
+     sit and kept in TrackEntry.timestamp, so they never reach a title or a search.
 """
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
 
 from rapidfuzz import fuzz
 
@@ -20,17 +23,24 @@ from .textmatch import norm_dashes
 MIN_TRACKS = 3
 HEADER_WORDS = ("tracklist", "track list", "tracklisting", "playlist", "setlist", "tl")
 
+_TS = r"\d{1,2}:\d{2}(?::\d{2})?"
 _PREFIX = re.compile(
-    r"""^\s*
+    rf"""^\s*
     (?:
-        \[?(?P<ts>\d{1,2}:\d{2}(?::\d{2})?)\]?\s*[-.)]?\s* # 00:00  [1:02:03]
-      | (?P<num>\d{1,3})\s*(?:[.)\]:\-]|\s)\s*          # 01.  1)  [01]  1 -  01
-      | \[(?P<bnum>\d{1,3})\]\s*
+        [\[\(]?(?P<ts>{_TS})[\]\)]?\s*[-.:|)]?\s*    # 00:00  [1:02:03]  (03:04) -
+      | (?P<num>\d{{1,3}})\s*(?:[.)\]:\-]|\s)\s*     # 01.  1)  [01]  1 -  01
+      | \[(?P<bnum>\d{{1,3}})\]\s*
       | [•*●▪►>]\s*                   # bullets
     )
     """,
     re.X,
 )
+# A cue time right after the track number: "1. [00:00] Artist - Title"
+_TS_LEAD = re.compile(rf"^[\[\(\{{]?(?P<ts>{_TS})[\]\)\}}]?\s*[-.:|)]?\s*")
+# ... at the end of the line: "Artist - Title 00:03:04", "Title - 03:04", "Title | 3:04"
+_TS_TRAIL = re.compile(rf"\s*(?:[-|@~]\s*)?[\[\(\{{]?(?P<ts>{_TS})[\]\)\}}]?\s*$")
+# ... or in brackets anywhere: "Artist - Title [03:04] [LABEL]"
+_TS_WRAPPED = re.compile(rf"\s*[\[\(\{{]\s*(?P<ts>{_TS})\s*[\]\)\}}]")
 _LAYER = re.compile(r"^\s*(?:\+|w/|w\\)\s*", re.I)
 _SEP = re.compile(r"\s+-\s+|\s*-\s+|\s+-\s*")
 _ID = re.compile(r"^(?:id|\?+|tba|unknown|unreleased id)$", re.I)
@@ -69,15 +79,54 @@ def split_artist_title(text: str) -> tuple[str, str] | None:
     return artist, title
 
 
-def parse_line(line: str) -> tuple[str, str, bool, bool] | None:
-    """Returns (artist, title, numbered, layer) or None."""
+class ParsedLine(NamedTuple):
+    artist: str
+    title: str
+    numbered: bool
+    layer: bool
+    timestamp: str = ""
+
+
+def _usable(s: str) -> bool:
+    return bool(s) and (_is_id_line(s) or split_artist_title(s) is not None)
+
+
+def strip_timestamps(s: str) -> tuple[str, str]:
+    """Take cue times out of a track line. Returns (line without them, first cue time).
+
+    A trailing or bracketed time is only removed when what is left still reads as
+    "Artist - Title", so a track that is really called "03:00" keeps its name.
+    """
+    ts = ""
+    m = _TS_LEAD.match(s)
+    if m and _usable(s[m.end():].strip()):
+        ts, s = m.group("ts"), s[m.end():].strip()
+    while True:
+        m = _TS_WRAPPED.search(s)
+        if not m:
+            break
+        rest = (s[: m.start()] + s[m.end():]).strip()
+        if not _usable(rest):
+            break
+        ts, s = ts or m.group("ts"), rest
+    m = _TS_TRAIL.search(s)
+    if m and m.start() > 0:
+        rest = s[: m.start()].strip()
+        if _usable(rest):
+            ts, s = ts or m.group("ts"), rest
+    return s, ts
+
+
+def parse_line(line: str) -> ParsedLine | None:
     s = _URL.sub("", _EMOJI.sub("", line)).strip()
     if not s:
         return None
     numbered = False
+    ts = ""
     m = _PREFIX.match(s)
     if m and m.end() > 0 and (m.group("num") or m.group("ts") or m.group("bnum")):
         numbered = True
+        ts = m.group("ts") or ""
         s = s[m.end():].strip()
     elif m and m.end() > 0:
         s = s[m.end():].strip()
@@ -86,12 +135,14 @@ def parse_line(line: str) -> tuple[str, str, bool, bool] | None:
     if lm:
         layer = True
         s = s[lm.end():].strip()
+    s, ts2 = strip_timestamps(s)
+    ts = ts or ts2
     if _is_id_line(s):
-        return "ID", "ID", numbered, layer
+        return ParsedLine("ID", "ID", numbered, layer, ts)
     at = split_artist_title(s)
     if not at:
         return None
-    return at[0], at[1], numbered, layer
+    return ParsedLine(at[0], at[1], numbered, layer, ts)
 
 
 def _is_id_line(s: str) -> bool:
@@ -116,7 +167,7 @@ def parse_tracklist(text: str, source: str = "soundcloud") -> list[TrackEntry]:
                 if misses >= 3 and header_idx is None:
                     break
             continue
-        artist, title, numbered, layer = parsed
+        artist, title, numbered, layer, ts = parsed
         if not numbered and not layer and header_idx is None:
             continue
         misses = 0
@@ -130,6 +181,7 @@ def parse_tracklist(text: str, source: str = "soundcloud") -> list[TrackEntry]:
                 is_id=is_id,
                 is_layer=layer,
                 source=source,
+                timestamp=ts,
             )
         )
     if len(entries) < MIN_TRACKS:

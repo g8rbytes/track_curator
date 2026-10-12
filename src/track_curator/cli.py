@@ -1,6 +1,7 @@
 """Command line entry point.
 
   track-curator run "[LUMBERJVCK's Deep Cuts, 1-20]" "[Dirtyphonics @ Rampage Open Air 2026]"
+  track-curator run "[LUMBERJVCK's Deep Cuts, 18-18]" --cart        # cart: lumberjvcks_deep_cuts_18_18
   track-curator run -f sets.txt --cart
   track-curator tracklist "[Dirtyphonics @ Rampage Open Air 2026]"   # just print the tracklist
   track-curator cart ~/TrackCurator/<run>/result.json                  # fill the Beatport cart later
@@ -16,9 +17,11 @@ import time
 import webbrowser
 from pathlib import Path
 
+from . import __version__
+from .beatport import cart_name_for
 from .http import Http
 from .inputs import parse_requests
-from .models import BeatportMatch
+from .models import BeatportMatch, from_dict
 from .textmatch import slugify
 
 
@@ -40,6 +43,8 @@ def cmd_run(a) -> int:
         return 2
     if a.tracklist_url:
         reqs[0].url_1001 = a.tracklist_url
+    raw = [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+    cart_name = "" if a.default_cart else (a.cart_name or cart_name_for(raw))
     out = Path(a.out).expanduser() if a.out else _out_dir(Path(a.base).expanduser(), reqs)
     opts = Options(
         out_dir=out,
@@ -50,10 +55,11 @@ def cmd_run(a) -> int:
         include_layers=not a.skip_layers,
     )
     cur = Curator(opts, http=Http(offline=a.offline))
-    result = cur.run(reqs)
-    if a.cart:
-        _cart([t.beatport for t in result.tracks if t.beatport])
+    result = cur.run(reqs, raw=raw, cart_name=cart_name)
     paths = write_all(result, out)
+    if a.cart:
+        _cart([t.beatport for t in result.tracks if t.beatport], cart_name, out)
+        paths = write_all(result, out)  # record what made it into the cart
     counts: dict[str, int] = {}
     for t in result.tracks:
         counts[t.status] = counts.get(t.status, 0) + 1
@@ -74,7 +80,8 @@ def cmd_tracklist(a) -> int:
             cur.fill_tracklist(ep, req)
             print(f"\n## {ep.label}  [{ep.tracklist_source}]")
             for t in ep.tracks:
-                print(f"{'  w/' if t.is_layer else f'{t.position:>3}.'} {t.display}{'  (ID)' if t.is_id else ''}")
+                ts = f"[{t.timestamp}] " if t.timestamp else ""
+                print(f"{'  w/' if t.is_layer else f'{t.position:>3}.'} {ts}{t.display}{'  (ID)' if t.is_id else ''}")
     return 0
 
 
@@ -82,27 +89,38 @@ def _load(path: str) -> dict:
     return json.loads(Path(path).expanduser().read_text())
 
 
-def _cart(matches: list[BeatportMatch]) -> None:
+def _cart(matches: list[BeatportMatch], cart_name: str = "", debug_dir: Path | None = None) -> None:
     from .beatport import fill_cart
     from .browser import Browser
 
     if not matches:
         print("No Beatport matches to add.")
         return
+    print(f"\nAdding {len(matches)} tracks to " + (f"the Beatport cart {cart_name}" if cart_name else "your default Beatport cart"))
     b = Browser()
     try:
-        fill_cart(matches, b)
+        fill_cart(matches, b, cart_name=cart_name, debug_dir=debug_dir)
     finally:
         b.close()
 
 
 def cmd_cart(a) -> int:
-    data = _load(a.result)
-    matches = [BeatportMatch(**t["beatport"]) for t in data["tracks"] if t.get("beatport")]
+    path = Path(a.result).expanduser()
+    data = _load(str(path))
+    matches = [from_dict(BeatportMatch, t["beatport"]) for t in data["tracks"] if t.get("beatport")]
     if a.only:
         keep = {int(x) for x in a.only.split(",")}
         matches = [m for m in matches if m.track_id in keep]
-    _cart(matches)
+    if a.default_cart:
+        cart_name = ""
+    elif a.cart_name:
+        cart_name = a.cart_name
+    elif "cart_name" in data:
+        cart_name = data["cart_name"]
+    else:
+        cart_name = ""
+        print("This run predates named carts, so tracks go to your default cart (use --cart-name NAME for a new one).")
+    _cart(matches, cart_name, path.parent)
     return 0
 
 
@@ -159,6 +177,7 @@ def cmd_gates(a) -> int:
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="track-curator", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("run", help="tracklists -> free downloads -> Beatport list")
@@ -167,7 +186,10 @@ def main(argv=None) -> int:
     r.add_argument("--tracklist-url", help="use this 1001Tracklists page for the (single) request")
     r.add_argument("--base", default="~/TrackCurator", help="where run folders go (default ~/TrackCurator)")
     r.add_argument("--out", help="exact output folder")
-    r.add_argument("--cart", action="store_true", help="add Beatport matches to your cart in a browser window")
+    r.add_argument("--cart", action="store_true",
+                   help="add Beatport matches to a cart named after the request, in a browser window")
+    r.add_argument("--cart-name", help="name the Beatport cart yourself (default: the request, e.g. lumberjvcks_deep_cuts_18_18)")
+    r.add_argument("--default-cart", action="store_true", help="use your current default cart instead of a named one")
     r.add_argument("--browser", action="store_true", help="use a browser window when a site shows a bot check")
     r.add_argument("--no-download", action="store_true")
     r.add_argument("--no-beatport", action="store_true")
@@ -182,9 +204,11 @@ def main(argv=None) -> int:
     t.add_argument("--browser", action="store_true")
     t.set_defaults(fn=cmd_tracklist)
 
-    c = sub.add_parser("cart", help="add a run's Beatport matches to your cart")
+    c = sub.add_parser("cart", help="add a run's Beatport matches to its named cart")
     c.add_argument("result", help="path to a run's result.json")
     c.add_argument("--only", help="comma-separated Beatport track ids to add")
+    c.add_argument("--cart-name", help="cart to fill (default: the one the run was named for)")
+    c.add_argument("--default-cart", action="store_true", help="use your current default cart instead")
     c.set_defaults(fn=cmd_cart)
 
     lg = sub.add_parser("login", help="log in to Beatport once in the cart browser")
