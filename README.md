@@ -62,11 +62,14 @@ For hacking on the code instead: `python3 -m venv .venv && source .venv/bin/acti
    A Beatport link on the track's SoundCloud upload goes through the same checks. When several
    pass, Extended Mix beats Original Mix. The report shows the Beatport track that was picked
    and why, and for misses the closest result and why it was rejected.
-6. **Cart.** `--cart` (or `track-curator cart <run>/result.json --only 123,456`) opens a browser
-   window, lets you log in once, creates (or reuses) a Beatport cart named after your request and
-   makes it your default cart, then presses each track's Buy button so it lands in that cart.
-   `"[LUMBERJVCK's Deep Cuts, 18-18]"` gives the cart `lumberjvcks_deep_cuts_18_18`. It asks you
-   to glance at the window before adding, and stays your default cart afterwards.
+6. **Cart.** `--cart` opens a browser window, lets you log in once, and finds your Beatport cart
+   named after the request, creating it in Cart Preferences the first time.
+   `"[LUMBERJVCK's Deep Cuts, 18-18]"` gives the cart `lumberjvcks_deep_cuts_18_18`. On each
+   track's page it then clicks the down arrow next to the buy button and ticks that cart, the
+   way you would. The buy button itself is never pressed, your default cart stays as it is,
+   and tracks already in the cart are left alone.
+   `track-curator cart <run>/result.json` redoes just this step for a finished run (`--only
+   123,456` for some tracks) and updates that run's report.
 
 Output goes to `~/TrackCurator/<date>-<name>/`: `report.html`, `tracks.csv`, `result.json`, `downloads/`.
 The report ends with every free download in one list of links, for clicking through gates quickly.
@@ -78,7 +81,7 @@ The report ends with every free download in one list of links, for clicking thro
 |---|---|
 | `--cart` | add the Beatport matches to a cart named after the request |
 | `--cart-name NAME` | use this cart name instead (also on `track-curator cart`) |
-| `--default-cart` | add to whatever cart is your default instead of a named one |
+| `--default-cart` | press each track's buy button instead, which adds to your default cart |
 | `--browser` | use a real browser window if 1001Tracklists shows a bot check (solve it once) |
 | `--tracklist-url URL` | use this 1001Tracklists page instead of searching |
 | `-f sets.txt` | one request per line |
@@ -90,11 +93,16 @@ The report ends with every free download in one list of links, for clicking thro
 
 - Site layouts change. The SoundCloud part uses the same API soundcloud.com itself uses; the
   1001Tracklists and Beatport parsers read page structure and are the likeliest to need a tweak.
-- Beatport has no public cart API, so the cart step clicks through Cart Preferences and the Buy
-  button on each track page. If a control can't be found it asks you to do that one step in the
-  window and saves the page's button labels and a screenshot as `beatport-cart-page.json`/`.png`
-  in the run folder (labels only, no cookies). If Beatport renames the Buy button, update
-  `CART_BUTTONS` in `src/track_curator/beatport.py`.
+- Beatport has no public cart API, so the cart step uses the website like you do. When it can't
+  find something it saves the page's control labels and a screenshot in the run folder
+  (`beatport-cart-page.*` for Cart Preferences, `beatport-track-page.*` for the cart list on
+  track pages; labels only, no cookies), and it stops after two tracks if the cart list doesn't
+  work. The page scripts are in `src/track_curator/beatport.py`; `tests/beatport_site` is a
+  stand-in of those pages for testing them.
+- That cart list cuts long names short (`lumberjvcks_deep_cut...`). When several of your carts
+  start the same way, the tool tells them apart by their order and checks that the right cart's
+  count went up; if it can't, it takes the track back out and stops. Deleting carts you've
+  finished with avoids this.
 - Download gates are opened for you to finish, not completed automatically.
 
 Run the offline tests with `pip install -e '.[dev]' && pytest`.

@@ -122,3 +122,24 @@ def test_loads_results_from_older_versions(tmp_path: Path):
     p.write_text(__import__("json").dumps(old))
     r = load_result(p)
     assert r.tracks[0].beatport.track_id == 1 and r.cart_name == ""
+
+
+def test_cart_command_records_what_went_in(tmp_path: Path, monkeypatch):
+    import track_curator.cli as cli
+
+    cur = Curator(Options(out_dir=tmp_path), http=FakeHttp(), log=lambda *_: None)
+    cur.sc, cur.tl, cur.bp = FakeSC(), FakeTL(), FakeBP()
+    paths = write_all(cur.run([parse_request("[LUMBERJVCK Deep Cuts, 7]")], cart_name="deep_cuts_7"), tmp_path)
+    used = []
+
+    def fake_cart(matches, cart_name, debug_dir):
+        used.append(cart_name)
+        for m in matches:
+            m.in_cart = True
+
+    monkeypatch.setattr(cli, "_cart", fake_cart)
+    assert cli.main(["cart", str(paths["json"])]) == 0
+    assert used == ["deep_cuts_7"]
+    saved = [t["beatport"] for t in __import__("json").loads(paths["json"].read_text())["tracks"] if t.get("beatport")]
+    assert saved and all(b["in_cart"] for b in saved)
+    assert "in cart" in paths["html"].read_text()

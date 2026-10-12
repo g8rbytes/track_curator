@@ -21,7 +21,7 @@ from . import __version__
 from .beatport import cart_name_for
 from .http import Http
 from .inputs import parse_requests
-from .models import BeatportMatch, from_dict
+from .models import BeatportMatch
 from .textmatch import slugify
 
 
@@ -105,9 +105,12 @@ def _cart(matches: list[BeatportMatch], cart_name: str = "", debug_dir: Path | N
 
 
 def cmd_cart(a) -> int:
+    from .report import load_result, write_all
+
     path = Path(a.result).expanduser()
     data = _load(str(path))
-    matches = [from_dict(BeatportMatch, t["beatport"]) for t in data["tracks"] if t.get("beatport")]
+    result = load_result(path)
+    matches = [t.beatport for t in result.tracks if t.beatport]
     if a.only:
         keep = {int(x) for x in a.only.split(",")}
         matches = [m for m in matches if m.track_id in keep]
@@ -121,6 +124,9 @@ def cmd_cart(a) -> int:
         cart_name = ""
         print("This run predates named carts, so tracks go to your default cart (use --cart-name NAME for a new one).")
     _cart(matches, cart_name, path.parent)
+    result.cart_name = cart_name or result.cart_name
+    paths = write_all(result, path.parent)  # record what made it into the cart
+    print(f"Report: {paths['html']}")
     return 0
 
 
@@ -189,7 +195,7 @@ def main(argv=None) -> int:
     r.add_argument("--cart", action="store_true",
                    help="add Beatport matches to a cart named after the request, in a browser window")
     r.add_argument("--cart-name", help="name the Beatport cart yourself (default: the request, e.g. lumberjvcks_deep_cuts_18_18)")
-    r.add_argument("--default-cart", action="store_true", help="use your current default cart instead of a named one")
+    r.add_argument("--default-cart", action="store_true", help="press each track's buy button instead, which adds to your default cart")
     r.add_argument("--browser", action="store_true", help="use a browser window when a site shows a bot check")
     r.add_argument("--no-download", action="store_true")
     r.add_argument("--no-beatport", action="store_true")
@@ -208,7 +214,7 @@ def main(argv=None) -> int:
     c.add_argument("result", help="path to a run's result.json")
     c.add_argument("--only", help="comma-separated Beatport track ids to add")
     c.add_argument("--cart-name", help="cart to fill (default: the one the run was named for)")
-    c.add_argument("--default-cart", action="store_true", help="use your current default cart instead")
+    c.add_argument("--default-cart", action="store_true", help="press each track's buy button instead, which adds to your default cart")
     c.set_defaults(fn=cmd_cart)
 
     lg = sub.add_parser("login", help="log in to Beatport once in the cart browser")

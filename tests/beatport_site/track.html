@@ -1,0 +1,118 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Track</title>
+<style>
+body{font:16px sans-serif;background:#222;color:#eee;margin:0;padding:0 20px}
+.actions{display:flex;align-items:center;gap:14px;margin:20px 0}
+.ctl{position:relative;display:inline-flex}
+.ctl button.price{background:#888;color:#fff;border:0;padding:10px 18px;font-weight:bold}
+.ctl .arrow{background:#666;color:#fff;border:0;width:44px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.menu{position:absolute;top:52px;left:-340px;width:500px;background:#111;padding:16px;z-index:5}
+.row{display:flex;align-items:center;gap:12px;padding:10px 0;cursor:pointer}
+.row .nm{display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);margin:-1px}
+.fakebox{display:inline-block;width:18px;height:18px;background:#fff;border-radius:3px}
+.fakebox.on{background:#5bc0de}
+.box{display:inline-block;width:18px;height:18px;background:#fff}
+[aria-checked=true] .box{background:#5bc0de}
+.share{margin-left:40px;display:flex;gap:14px}
+.related{margin-top:420px}
+.related .ctl{margin:8px 0}
+</style></head><body>
+<h1 id="title">Track</h1>
+<div class="actions">
+  <button type="button" aria-label="Play track"><svg data-testid="icon-play" role="img" width="20" height="20"></svg></button>
+  <button type="button" aria-label="Add to queue"><svg data-testid="icon-queue" role="img" width="20" height="20"></svg></button>
+  <button type="button" aria-label="Add to playlist">+</button>
+  <div class="ctl" id="ctl"><button type="button" class="price" id="buy"></button></div>
+  <div class="share"><button type="button" aria-label="Share on X">X</button><button type="button" aria-label="Share on Facebook">f</button><button type="button" aria-label="Copy link">link</button></div>
+</div>
+<section class="related"><h3>More tracks</h3>
+  <div class="rel"><a href="/track/other-song/901">Other Song</a>
+    <div class="ctl"><button type="button" class="price">$1.29</button><button type="button" class="arrow"><svg data-testid="icon-drop-down" role="img" width="12" height="12"></svg></button></div></div>
+  <div class="rel"><a href="/track/another-one/902">Another One</a>
+    <div class="ctl"><button type="button" class="price">$1.29</button><button type="button" class="arrow"><svg data-testid="icon-drop-down" role="img" width="12" height="12"></svg></button></div></div>
+</section>
+<div id="onetrust-consent-sdk" style="position:fixed;bottom:0;right:0"><label><input type="checkbox" role="switch" aria-label="Allow all" checked> Main Cart cookies</label></div>
+<script src="mock.js"></script>
+<script>
+header();
+const id = new URLSearchParams(location.search).get('id');
+const V = st.variant;
+document.getElementById('title').textContent = 'Track ' + id + ' Original Mix';
+const buy = document.getElementById('buy');
+const owned = id.startsWith('owned');  // bought already: a download button and no cart list
+const inAny = () => st.carts.some(c => c.items.includes(id));
+const setBuy = () => { buy.textContent = owned ? 'Download' : inAny() ? 'In Cart' : '$1.49'; };
+setBuy();
+buy.onclick = () => {
+  st = load(); st.buyClicks++;
+  const c = st.carts.find(c => c.key === st.def);
+  if (!c.items.includes(id)) c.items.push(id);
+  save(st); setBuy(); if (V !== 'B') renderHeader();
+};
+function toggle(key, ms, after) {
+  setTimeout(() => {
+    st = load();
+    const c = st.carts.find(c => c.key === key), i = c.items.indexOf(id);
+    if (i >= 0) c.items.splice(i, 1); else c.items.push(id);
+    save(st); setBuy();
+    if (V !== 'B') renderHeader();
+    if (after) after();
+  }, ms);
+}
+const trunc = n => n.length > 20 ? n.slice(0, 20) + '...' : n;
+let menu = null;
+function closeMenu() { if (menu) { menu.remove(); menu = null; } }
+function openMenu() {
+  st = load();
+  menu = document.createElement('div');
+  menu.className = 'menu';
+  if (V === 'A') {
+    // inside the control; full names with a CSS ellipsis; native checkbox; stays open and redraws
+    const draw = () => {
+      st = load();
+      menu.innerHTML = st.carts.map(c => `<div class="row" data-key="${c.key}"><svg data-testid="cart-${c.key}" role="img" width="16" height="16"></svg>`
+        + `<span class="nm">${c.name}</span><input type="checkbox"${c.items.includes(id) ? ' checked' : ''}></div>`).join('');
+      menu.querySelectorAll('input').forEach(inp => inp.onclick = e => {
+        e.preventDefault();  // like a controlled checkbox: it shows the saved state once saved
+        toggle(inp.closest('.row').dataset.key, 400, draw);
+      });
+    };
+    draw();
+    document.getElementById('ctl').appendChild(menu);
+  } else if (V === 'B') {
+    // a portal at the end of the page; names cut to 20 characters; hidden input in a label;
+    // closes as soon as a cart is clicked; the header only updates on reload
+    const r = document.getElementById('ctl').getBoundingClientRect();
+    menu.style.cssText = `position:absolute;top:${r.bottom + scrollY + 8}px;left:${r.left - 300}px`;
+    const list = st.reverse ? [...st.carts.slice(0, 2), ...st.carts.slice(2).reverse()] : st.carts;  // order unlike the header's
+    menu.innerHTML = list.map(c => `<label class="row" data-key="${c.key}"><svg role="img" width="16" height="16"></svg>`
+      + `<span>${trunc(c.name)}</span><input type="checkbox" class="vh"${c.items.includes(id) ? ' checked' : ''}>`
+      + `<span class="fakebox${c.items.includes(id) ? ' on' : ''}"></span></label>`).join('');
+    menu.querySelectorAll('input').forEach(inp => inp.onchange = () => {
+      const key = inp.closest('.row').dataset.key;
+      closeMenu();
+      toggle(key, 400);
+    });
+    document.body.appendChild(menu);
+  } else if (V === 'C') {
+    // role=menu with menuitemcheckbox rows; aria-checked updates in place after saving
+    menu.setAttribute('role', 'menu');
+    menu.innerHTML = st.carts.map(c => `<div class="row" role="menuitemcheckbox" tabindex="0" data-key="${c.key}" aria-checked="${c.items.includes(id)}">`
+      + `<svg role="img" width="16" height="16"></svg><span>${c.name}</span><span class="box"></span></div>`).join('');
+    menu.querySelectorAll('[role=menuitemcheckbox]').forEach(row => row.onclick = () => {
+      toggle(row.dataset.key, 300, () => row.setAttribute('aria-checked', String(load().carts.find(c => c.key === row.dataset.key).items.includes(id))));
+    });
+    document.getElementById('ctl').appendChild(menu);
+  }
+}
+if (V !== 'E' && !owned) {
+  const arrow = document.createElement(V === 'C' ? 'div' : 'button');
+  arrow.className = 'arrow';
+  if (V === 'C') { arrow.setAttribute('role', 'button'); arrow.setAttribute('aria-haspopup', 'true'); arrow.tabIndex = 0; }
+  else arrow.type = 'button';
+  arrow.innerHTML = '<svg data-testid="icon-drop-down" role="img" width="12" height="12"></svg>';
+  arrow.onclick = () => { st = load(); st.caretClicks++; save(st); if (menu) closeMenu(); else openMenu(); };
+  buy.after(arrow);
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
+</script></body></html>

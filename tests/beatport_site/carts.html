@@ -1,0 +1,33 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Cart Preferences</title>
+<style>body{font:16px sans-serif;background:#222;color:#eee}.row{display:flex;gap:8px;align-items:center;width:600px;padding:8px}
+.row .nm{flex:1}[role=dialog]{position:fixed;top:100px;left:300px;background:#333;padding:20px}</style></head><body>
+<main><nav><a href="#">Beatport Profile</a> <a href="#">Cart Preferences</a></nav>
+<h3>Pro Carts</h3><div id="pro"></div><h3>My Carts</h3><div id="mine"></div>
+<button type="button" class="Button_primary" id="newcart">New Cart</button>
+<div role="dialog" id="dlg" style="display:none"><input type="text" placeholder="Cart name" maxlength="40">
+<button type="button" id="save">Save</button><button type="button" id="cancel">Cancel</button></div>
+<aside>To use the multiple cart feature, click the down arrow next to any buy button.</aside></main>
+<div id="onetrust-consent-sdk"><input type="checkbox" role="switch" aria-label="Allow all" checked> cookie switch</div>
+<script src="mock.js"></script>
+<script>
+header();
+function render() {
+  const row = (c, icon, extra) => `<div class="row"><svg data-testid="${icon}" role="img" width="16" height="16"></svg><span class="nm">${c.name}</span>${extra}</div>`;
+  const edit = '<button type="button" title="edit cart"><svg data-testid="icon-settings" role="img" width="16" height="16"></svg></button>';
+  const del = '<button type="button" title="delete cart"><svg data-testid="icon-close-x" role="img" width="16" height="16"></svg></button>';
+  document.getElementById('pro').innerHTML = row(st.carts[0], 'icon-cart-main', edit) + row(st.carts[1], 'icon-hold-bin', '');
+  document.getElementById('mine').innerHTML = st.carts.slice(2).map(c => row(c, 'icon-cart', edit + del)).join('');
+}
+render();
+const dlg = document.getElementById('dlg');
+document.getElementById('newcart').onclick = () => { dlg.style.display = 'block'; };
+document.getElementById('cancel').onclick = () => { dlg.style.display = 'none'; };
+document.getElementById('save').onclick = () => {
+  const v = dlg.querySelector('input').value;
+  setTimeout(() => {
+    st = load(); st.carts.push({key: v, name: v, items: []}); save(st);
+    dlg.style.display = 'none'; render();
+    if (st.variant !== 'B') renderHeader();   // B: the header only catches up on reload
+  }, 300);
+};
+</script></body></html>
