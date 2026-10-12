@@ -59,8 +59,9 @@ For hacking on the code instead: `python3 -m venv .venv && source .venv/bin/acti
      credited as an artist; a line with no version rejects other people's remixes and
      VIP/instrumental/live versions; VIP and instrumental must agree both ways.
 
-   When several pass, Extended Mix beats Original Mix. The report shows the Beatport track
-   that was picked and why, and for misses the closest result and why it was rejected.
+   A Beatport link on the track's SoundCloud upload goes through the same checks. When several
+   pass, Extended Mix beats Original Mix. The report shows the Beatport track that was picked
+   and why, and for misses the closest result and why it was rejected.
 6. **Cart.** `--cart` (or `track-curator cart <run>/result.json --only 123,456`) opens a browser
    window, lets you log in once, creates (or reuses) a Beatport cart named after your request and
    makes it your default cart, then presses each track's Buy button so it lands in that cart.

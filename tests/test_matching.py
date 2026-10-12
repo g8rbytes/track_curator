@@ -146,6 +146,25 @@ def test_only_the_top_results_are_considered():
     assert match is None and f"top {MAX_RESULTS}" in why and "Junk" in why
 
 
+def test_beatport_link_from_soundcloud_is_checked_too():
+    original = bp(["Sean Paul"], "Temperature", id=7)
+    flip = bp(["Sean Paul"], "Temperature", "LUMBERJVCK Remix", remixers=["LUMBERJVCK"], id=8)
+
+    class FakeBeatport(Beatport):
+        def track(self, url):
+            return {"7": original, "8": flip}[url.rsplit("/", 1)[-1]]
+
+        def search(self, q):
+            return [original]
+
+    entry = TrackEntry(position=1, artist="Sean Paul", title="Temperature (LUMBERJVCK FLIP)")
+    m, _ = FakeBeatport(http=None).match(entry, "https://www.beatport.com/track/temperature/8")
+    assert m.track_id == 8 and m.mix == "LUMBERJVCK Remix" and m.reason.startswith("linked from its SoundCloud upload")
+    m, why = FakeBeatport(http=None).match(entry, "https://www.beatport.com/track/temperature/7")
+    assert m is None
+    assert "its SoundCloud upload links Sean Paul - Temperature (Original Mix), rejected because LUMBERJVCK is not on it" in why
+
+
 def test_cart_name():
     assert cart_name_for(["[LUMBERJVCK's Deep Cuts, 18-18]"]) == "lumberjvcks_deep_cuts_18_18"
     assert cart_name_for(["[Dirtyphonics @ Rampage Open Air 2026]"]) == "dirtyphonics_rampage_open_air_2026"

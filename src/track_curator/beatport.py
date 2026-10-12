@@ -16,7 +16,7 @@ from typing import Any, Callable, Iterator, Optional
 from bs4 import BeautifulSoup
 
 from .http import Http
-from .matching import MAX_RESULTS, beatport_candidate, parse_spec, rank, search_queries
+from .matching import MAX_RESULTS, beatport_candidate, judge, parse_spec, rank, search_queries
 from .models import BeatportMatch, TrackEntry
 from .textmatch import slugify
 
@@ -55,7 +55,9 @@ def _track(d: dict) -> Optional[dict]:
     price = d.get("price")
     if isinstance(price, dict):
         price = price.get("display") or price.get("value")
-    label = d.get("label") if isinstance(d.get("label"), dict) else {}
+    release = d.get("release") if isinstance(d.get("release"), dict) else {}
+    label = d.get("label") or release.get("label")  # search results | track pages
+    label = label if isinstance(label, dict) else {}
     remixers = _names(d.get("artists"), remixers=True)
     for r in _names(d.get("remixers"), remixers=False):  # older pages list remixers separately
         if r not in remixers:
@@ -110,14 +112,34 @@ class Beatport:
         html = self.http.text(f"{WEB}/search/tracks", params={"q": q})
         return tracks_from_next_data(html)
 
+    def track(self, url: str) -> Optional[dict]:
+        """The track a beatport.com/track/<slug>/<id> link points at, read from its page."""
+        m = re.search(r"/track/([^/?#]+)/(\d+)", url or "")
+        if not m:
+            return None
+        tid = int(m.group(2))
+        html = self.http.text(f"{WEB}/track/{m.group(1)}/{tid}")
+        return next((t for t in tracks_from_next_data(html) if t["id"] == tid), None)
+
     def match(self, entry: TrackEntry, hint_url: Optional[str] = None) -> tuple[Optional[BeatportMatch], str]:
-        """The Beatport track this tracklist line names, or (None, why not)."""
-        if hint_url and "/track/" in hint_url:
-            m = re.search(r"/track/([^/]+)/(\d+)", hint_url)
-            if m:
-                return BeatportMatch(track_id=int(m.group(2)), url=hint_url, artists=entry.artist, name=entry.title,
-                                     score=100.0, reason="linked from its SoundCloud upload"), ""
+        """The Beatport track this tracklist line names, or (None, why not).
+
+        A Beatport link on the track's SoundCloud upload is checked with the same rules as a
+        search result, since descriptions also link originals and other releases.
+        """
         spec = parse_spec(entry.artist, entry.title)
+        hint_note = ""
+        if hint_url and "/track/" in hint_url:
+            try:
+                t = self.track(hint_url)
+            except Exception:
+                t = None  # page didn't load: search instead
+            if t:
+                c = beatport_candidate(t)
+                v = judge(spec, c)
+                if v.ok:
+                    return _match(t, v.score, f"linked from its SoundCloud upload · {v.reason}"), ""
+                hint_note = f"; its SoundCloud upload links {c.display}, rejected because {v.reason}"
         closest = None
         tried = []
         for q in search_queries(spec, "beatport"):
@@ -126,17 +148,20 @@ class Beatport:
             accepted, near = rank(spec, [beatport_candidate(t, i) for i, t in enumerate(results)])
             if accepted:
                 c, v = accepted[0]
-                t = c.raw
-                return BeatportMatch(
-                    track_id=t["id"], url=track_url(t), artists=", ".join(t["artists"]), name=t["name"], mix=t["mix"],
-                    label=t["label"], price=t["price"], score=round(v.score, 1), reason=v.reason, query=q,
-                ), ""
+                return _match(c.raw, v.score, v.reason, q), ""
             if near and (closest is None or (near[1].artist_hit, near[1].title_score) > (closest[1].artist_hit, closest[1].title_score)):
                 closest = near
         note = f"Beatport: no match in the top {MAX_RESULTS} for " + " / ".join(f'"{q}"' for q in tried)
         if closest:
             note += f"; closest: {closest[0].display}, rejected because {closest[1].reason}"
-        return None, note
+        return None, note + hint_note
+
+
+def _match(t: dict, score: float, reason: str, query: str = "") -> BeatportMatch:
+    return BeatportMatch(
+        track_id=t["id"], url=track_url(t), artists=", ".join(t["artists"]), name=t["name"], mix=t["mix"],
+        label=t["label"], price=t["price"], score=round(score, 1), reason=reason, query=query,
+    )
 
 
 # -- cart ------------------------------------------------------------------------------

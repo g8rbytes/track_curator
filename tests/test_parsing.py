@@ -1,6 +1,6 @@
 import json
 
-from track_curator.beatport import tracks_from_next_data
+from track_curator.beatport import Beatport, tracks_from_next_data
 from track_curator.episodes import episode_number
 from track_curator.freedl import find_free_download
 from track_curator.inputs import parse_request, parse_requests
@@ -119,6 +119,28 @@ def test_beatport_next_data():
     assert t[0] == {"id": 123, "name": "Bad Habit", "mix": "Original Mix", "artists": ["LUMBERJVCK"], "remixers": [],
                     "label": "Disciple", "price": "$1.49", "slug": "bad-habit"}
     assert t[1]["artists"] == ["LUMBERJVCK"] and t[1]["remixers"] == ["Getter"]
+
+
+def test_beatport_track_page():
+    track = {"id": 8, "name": "Temperature", "mix_name": "LUMBERJVCK Remix", "slug": "temperature",
+             "artists": [{"id": 1, "name": "Sean Paul"}], "remixers": [{"id": 2, "name": "LUMBERJVCK"}],
+             "price": {"display": "$1.49"}, "release": {"label": {"name": "Atlantic"}}}
+    more = {"id": 9, "name": "Temperature", "mix_name": "Original Mix", "artists": [{"name": "Sean Paul"}]}
+    page = {"props": {"pageProps": {"dehydratedState": {"queries": [
+        {"queryKey": ["release-tracks"], "state": {"data": {"results": [more]}}},
+        {"queryKey": ["track", 8], "state": {"data": track}}]}}}}
+
+    class FakeHttp:
+        def text(self, url, params=None):
+            self.url = url
+            return '<script id="__NEXT_DATA__" type="application/json">' + json.dumps(page) + "</script>"
+
+    http = FakeHttp()
+    t = Beatport(http).track("https://www.beatport.com/track/temperature/8?utm_source=soundcloud")
+    assert http.url == "https://www.beatport.com/track/temperature/8"
+    assert t == {"id": 8, "name": "Temperature", "mix": "LUMBERJVCK Remix", "artists": ["Sean Paul"],
+                 "remixers": ["LUMBERJVCK"], "label": "Atlantic", "price": "$1.49", "slug": "temperature"}
+    assert Beatport(http).track("https://www.beatport.com/release/temperature/5") is None
 
 
 def test_timestamps_are_kept_out_of_titles():
