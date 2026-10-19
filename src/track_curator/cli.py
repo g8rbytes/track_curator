@@ -2,6 +2,8 @@
 
   track-curator run "[LUMBERJVCK's Deep Cuts, 1-20]" "[Dirtyphonics @ Rampage Open Air 2026]"
   track-curator run "[LUMBERJVCK's Deep Cuts, 18-18]" --cart        # cart: lumberjvcks_deep_cuts_18_18
+  track-curator run --sc-link https://soundcloud.com/<artist>/<set> --cart   # named after the upload
+  track-curator run "[My Set]" --setlist setlist.txt --cart          # your own tracklist, one per line
   track-curator run -f sets.txt --cart
   track-curator tracklist "[Dirtyphonics @ Rampage Open Air 2026]"   # just print the tracklist
   track-curator cart ~/TrackCurator/<run>/result.json                  # fill the Beatport cart later
@@ -19,15 +21,36 @@ from pathlib import Path
 
 from . import __version__
 from .beatport import cart_name_for
+from .episodes import find_set
 from .http import Http
-from .inputs import parse_requests
-from .models import BeatportMatch
+from .inputs import Request, parse_requests
+from .models import BeatportMatch, TrackEntry
 from .textmatch import slugify
+from .tracklist_parser import parse_setlist
 
 
 def _out_dir(base: Path, reqs) -> Path:
     name = slugify(" + ".join(r.query or (r.url or r.url_1001 or "") for r in reqs))[:60]
     return base / f"{time.strftime('%Y%m%d-%H%M')}-{name}"
+
+
+def _read_setlist(path: str) -> list[TrackEntry]:
+    if path == "-":
+        if sys.stdin.isatty():
+            print("Paste the tracklist, then press Ctrl-D on a new line:")
+        text = sys.stdin.read()
+    else:
+        text = Path(path).expanduser().read_text()
+    tracks, skipped = parse_setlist(text)
+    if skipped:
+        print('Skipped these setlist lines, which don\'t read as "Artist - Title":')
+        for line in skipped[:10]:
+            print(f"  {line}")
+        if len(skipped) > 10:
+            print(f"  ...and {len(skipped) - 10} more")
+    if not tracks:
+        print("No tracks in the setlist: put one per line as Artist - Title", file=sys.stderr)
+    return tracks
 
 
 def cmd_run(a) -> int:
@@ -38,16 +61,27 @@ def cmd_run(a) -> int:
     if a.file:
         lines += Path(a.file).read_text().splitlines()
     reqs = parse_requests(lines)
-    if not reqs:
-        print("Nothing to do: give a request like \"[Dirtyphonics @ Rampage Open Air 2026]\"", file=sys.stderr)
-        return 2
-    if a.tracklist_url:
-        reqs[0].url_1001 = a.tracklist_url
     raw = [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
-    cart_name = "" if a.default_cart else (a.cart_name or cart_name_for(raw))
-    out = Path(a.out).expanduser() if a.out else _out_dir(Path(a.base).expanduser(), reqs)
+    if a.sc_link or a.setlist:
+        if len(reqs) > 1 or (reqs and len(reqs[0].episodes) > 1):
+            print("--sc-link and --setlist are for one set: give at most one request, for one episode", file=sys.stderr)
+            return 2
+        reqs = reqs or [Request(query="")]
+    if not reqs:
+        print("Nothing to do: give a request like \"[Dirtyphonics @ Rampage Open Air 2026]\", a --sc-link or a --setlist",
+              file=sys.stderr)
+        return 2
+    req = reqs[0]
+    if a.tracklist_url:
+        req.url_1001 = a.tracklist_url
+    if a.sc_link:
+        req.url = a.sc_link
+    if a.setlist:
+        req.setlist = _read_setlist(a.setlist)
+        if not req.setlist:
+            return 2
     opts = Options(
-        out_dir=out,
+        out_dir=Path(a.base).expanduser(),  # set below, once the run has a name
         download=not a.no_download,
         beatport=not a.no_beatport,
         use_1001=not a.no_1001,
@@ -55,6 +89,16 @@ def cmd_run(a) -> int:
         include_layers=not a.skip_layers,
     )
     cur = Curator(opts, http=Http(offline=a.offline))
+    if not raw:  # no request typed: name the run after the upload, else after the setlist file
+        if req.url:
+            req.query = find_set(cur.sc, req).soundcloud_title
+        elif a.setlist != "-":
+            req.query = Path(a.setlist).stem
+        else:
+            req.query = time.strftime("setlist %Y-%m-%d %H%M")
+    cart_name = "" if a.default_cart else (a.cart_name or cart_name_for(raw or [req.query]))
+    out = Path(a.out).expanduser() if a.out else _out_dir(Path(a.base).expanduser(), reqs)
+    opts.out_dir = out
     result = cur.run(reqs, raw=raw, cart_name=cart_name)
     paths = write_all(result, out)
     if a.cart:
@@ -189,7 +233,14 @@ def main(argv=None) -> int:
     r = sub.add_parser("run", help="tracklists -> free downloads -> Beatport list")
     r.add_argument("requests", nargs="*", help='e.g. "[LUMBERJVCK\'s Deep Cuts, 1-20]"')
     r.add_argument("-f", "--file", help="file with one request per line")
-    r.add_argument("--tracklist-url", help="use this 1001Tracklists page for the (single) request")
+    r.add_argument("--sc-link", metavar="URL",
+                   help="the set's SoundCloud link, instead of searching for it "
+                        "(without a request, the run is named after it)")
+    given = r.add_mutually_exclusive_group()
+    given.add_argument("--setlist", metavar="FILE",
+                       help="your own tracklist, one track per line (- reads stdin), instead of finding one "
+                            "(without a request, the run is named after the file)")
+    given.add_argument("--tracklist-url", help="use this 1001Tracklists page for the (single) request")
     r.add_argument("--base", default="~/TrackCurator", help="where run folders go (default ~/TrackCurator)")
     r.add_argument("--out", help="exact output folder")
     r.add_argument("--cart", action="store_true",

@@ -4,7 +4,7 @@ from track_curator.beatport import Beatport, tracks_from_next_data
 from track_curator.episodes import episode_number
 from track_curator.freedl import find_free_download
 from track_curator.inputs import parse_request, parse_requests
-from track_curator.tracklist_parser import id_ratio, parse_tracklist
+from track_curator.tracklist_parser import id_ratio, parse_setlist, parse_tracklist
 from track_curator.tracklists1001 import parse_tracklist_page, pick_tracklist
 
 
@@ -165,3 +165,24 @@ def test_timestamps_are_kept_out_of_titles():
         ("Arya", "INSIDEOUT", "26:05"),
     ]
     assert t[5].is_id
+
+
+def test_setlist_takes_every_line():
+    t, skipped = parse_setlist("Excision - Throwin Elbows\n4 Strings - Day Time\nSubtronics - Griztronics\n")
+    assert [e.display for e in t] == ["Excision - Throwin Elbows", "4 Strings - Day Time", "Subtronics - Griztronics"]
+    assert not skipped and {e.source for e in t} == {"setlist"}
+    t, _ = parse_setlist("1 Excision - Throwin Elbows\n2 4 Strings - Day Time\n3 Subtronics - Griztronics")
+    assert [e.artist for e in t] == ["Excision", "4 Strings", "Subtronics"]  # numbered: only the track number goes
+    t, _ = parse_setlist("LUMBERJVCK - Bad Habit")
+    assert [e.display for e in t] == ["LUMBERJVCK - Bad Habit"]  # one track is a list too
+    assert parse_setlist("A - Playlist\nB - C")[0][0].title == "Playlist"  # a track, not a header
+
+
+def test_setlist_pasted_with_extras():
+    t, skipped = parse_setlist("Deep Cuts 19 - out now!\nTracklist:\n00:00 A - B\n03:10 C - D [LABEL]\nw/ E - F\n"
+                               "Strobe\nID - ID\n")
+    assert [(e.position, e.display, e.timestamp, e.is_layer) for e in t] == [
+        (1, "A - B", "00:00", False), (2, "C - D", "03:10", False), (2, "E - F", "", True), (3, "ID - ID", "", False)]
+    assert t[3].is_id and skipped == ["Strobe"]  # what's above the header isn't reported
+    assert parse_setlist("hello\nworld") == ([], ["hello", "world"])
+

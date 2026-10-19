@@ -37,7 +37,8 @@ For hacking on the code instead: `python3 -m venv .venv && source .venv/bin/acti
 1. **Find the upload on SoundCloud.** A series (`[Show, 1-20]`, `[Show, 3, 7, 9-11]`) is matched by
    show name, then the show's own account is walked so every episode number is found, not just
    the ones search ranks highly. A single set (`[Artist @ Event 2026]`) takes the best-matching long
-   upload. A SoundCloud URL works too.
+   upload. A SoundCloud URL works too, and `--sc-link URL` next to a request uses that upload
+   instead of searching for it. Without a request, the run and its cart are named after the upload.
 2. **Read "Behind this track".** A tracklist is taken from the description when it has a
    `Tracklist`/`Playlist`/`TL` header (fuzzy) or at least 3 numbered/timestamped `Artist - Title` lines.
    `w/` lines are kept as layered tracks; `ID - ID`, `ID`, `??`, `TBA` count as IDs. Cue times
@@ -71,6 +72,14 @@ For hacking on the code instead: `python3 -m venv .venv && source .venv/bin/acti
    `track-curator cart <run>/result.json` redoes just this step for a finished run (`--only
    123,456` for some tracks) and updates that run's report.
 
+**Already have the tracklist?** `--setlist FILE` takes your own list instead of steps 1 to 3: one
+track per line as `Artist - Title`, numbered or not, with or without cue times or a `Tracklist`
+header. Lines that don't read as a track are shown and skipped. `-` reads the list from stdin, so
+`pbpaste | track-curator run "[My Set]" --setlist -` works straight from the clipboard. Without a
+request, the run and its cart are named after the file. `--sc-link` can go with it: the report then
+links the upload and, without a request, the run is named after it, but the tracks still come from
+your list.
+
 Output goes to `~/TrackCurator/<date>-<name>/`: `report.html`, `tracks.csv`, `result.json`, `downloads/`.
 The report ends with every free download in one list of links, for clicking through gates quickly.
 `track-curator report <run>/result.json` rebuilds an older run's report with the current layout.
@@ -83,6 +92,8 @@ The report ends with every free download in one list of links, for clicking thro
 | `--cart-name NAME` | use this cart name instead (also on `track-curator cart`) |
 | `--default-cart` | press each track's buy button instead, which adds to your default cart |
 | `--browser` | use a real browser window if 1001Tracklists shows a bot check (solve it once) |
+| `--sc-link URL` | use this SoundCloud upload instead of searching for the set |
+| `--setlist FILE` | use your own tracklist, one track per line (`-` reads stdin) |
 | `--tracklist-url URL` | use this 1001Tracklists page instead of searching |
 | `-f sets.txt` | one request per line |
 | `--no-download`, `--no-beatport`, `--no-1001`, `--skip-layers` | skip a stage |

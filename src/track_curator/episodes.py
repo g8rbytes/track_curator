@@ -86,8 +86,11 @@ def find_series(sc: SoundCloud, req: Request, log=print) -> list[Episode]:
 
 def find_set(sc: SoundCloud, req: Request) -> Episode:
     if req.url:
-        t = sc.resolve(req.url)
-        return _episode(t.get("title", req.url), None, t)
+        t = sc.resolve(re.split(r"[?#]", req.url)[0])  # share links add ?si=..., utm_ tags or #t=1:23
+        if t.get("kind") != "track":
+            raise ValueError(f"{req.url} is a SoundCloud {t.get('kind') or 'page'}, not a single upload")
+        n = req.episodes[0] if req.episodes else None  # "[Show, 19]" with --sc-link
+        return _episode(req.query or t.get("title") or req.url, n, t)
     best, best_s = None, 0.0
     for t in sc.search_tracks(req.query, limit=30):
         s = similarity(req.query, describe(t))

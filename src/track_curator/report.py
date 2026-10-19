@@ -124,7 +124,8 @@ def render_html(result: RunResult, result_path: str = "") -> str:
         counts[t.status] = counts.get(t.status, 0) + 1
     summary = " · ".join(f"{STATUS_LABEL.get(k, k)}: {v}" for k, v in counts.items())
     eps = "".join(
-        f"<li>{html.escape(e.label)}: {len(e.tracks)} tracks from {e.tracklist_source}"
+        f"<li>{html.escape(e.label)}: {len(e.tracks)} track{'' if len(e.tracks) == 1 else 's'} from "
+        f"{'your setlist' if e.tracklist_source == 'setlist' else e.tracklist_source}"
         f"{' · ' + _a(e.soundcloud_url, 'SoundCloud') if e.soundcloud_url else ''}"
         f"{' · ' + _a(e.tracklist_url_1001, '1001Tracklists') if e.tracklist_url_1001 else ''}"
         f"{' · <em>' + html.escape('; '.join(e.notes)) + '</em>' if e.notes else ''}</li>"

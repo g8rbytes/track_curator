@@ -1,15 +1,22 @@
 """Run the whole pipeline against fake sites (no network)."""
 from pathlib import Path
 
+import io
+import json
+import re
+
+import pytest
+
 from track_curator.inputs import parse_request
 from track_curator.pipeline import Curator, Options, merge_tracklists
 from track_curator.report import write_all
-from track_curator.tracklist_parser import parse_tracklist
+from track_curator.tracklist_parser import parse_setlist, parse_tracklist
 
 
 class FakeSC:
     def __init__(self):
         self.queries = []
+        self.resolved = []
         self.mix = {"id": 1, "kind": "track", "title": "Deep Cuts #007", "user": {"id": 9, "username": "LUMBERJVCK"},
                     "permalink_url": "https://soundcloud.com/lumberjvck/deep-cuts-007", "duration": 3_600_000,
                     "description": "Tracklist\n1. ID - ID\n2. ID - ID\n3. A - Song"}
@@ -27,6 +34,7 @@ class FakeSC:
         return iter([self.mix])
 
     def resolve(self, url):
+        self.resolved.append(url)
         return self.mix
 
     def download_url(self, t):
@@ -34,10 +42,15 @@ class FakeSC:
 
 
 class FakeTL:
+    def __init__(self):
+        self.calls = []
+
     def search(self, q, n):
+        self.calls.append(q)
         return "https://www.1001tracklists.com/tracklist/x/deep-cuts-007.html"
 
     def tracklist(self, url):
+        self.calls.append(url)
         return parse_tracklist("1. Alpha - Free Thing 00:00\n2. Beta - Gated 03:10\n3. Gamma - Paid One [06:20]\n4. ID - ID 09:00",
                                source="1001tracklists")
 
@@ -143,3 +156,99 @@ def test_cart_command_records_what_went_in(tmp_path: Path, monkeypatch):
     saved = [t["beatport"] for t in __import__("json").loads(paths["json"].read_text())["tracks"] if t.get("beatport")]
     assert saved and all(b["in_cart"] for b in saved)
     assert "in cart" in paths["html"].read_text()
+
+
+def _curator(tmp_path: Path) -> Curator:
+    cur = Curator(Options(out_dir=tmp_path), http=FakeHttp(), log=lambda *_: None)
+    cur.sc, cur.tl, cur.bp = FakeSC(), FakeTL(), FakeBP()
+    return cur
+
+
+def test_sc_link_skips_only_the_set_search(tmp_path: Path):
+    cur = _curator(tmp_path)
+    req = parse_request("[LUMBERJVCK Deep Cuts, 7]")
+    req.url = "https://soundcloud.com/lumberjvck/deep-cuts-007?si=abc&utm_source=clipboard#t=1:23"
+    ep = cur.run([req]).episodes[0]
+    assert cur.sc.resolved == ["https://soundcloud.com/lumberjvck/deep-cuts-007"]
+    assert not [q for q in cur.sc.queries if "Deep Cuts" in q]  # no looking for the set itself
+    assert ep.label == "LUMBERJVCK Deep Cuts #7" and ep.number == 7
+    assert ep.tracklist_source == "both"  # its description, then 1001Tracklists as usual
+
+
+def test_setlist_skips_finding_the_set_and_its_tracklist(tmp_path: Path):
+    cur = _curator(tmp_path)
+    req = parse_request("[My Set]")
+    req.setlist = parse_setlist("Alpha - Free Thing\nBeta - Gated\nGamma - Paid One")[0]
+    res = cur.run([req])
+    assert not cur.sc.resolved and not cur.tl.calls
+    assert not [q for q in cur.sc.queries if "My Set" in q]
+    ep = res.episodes[0]
+    assert (ep.label, ep.tracklist_source, ep.soundcloud_url) == ("My Set", "setlist", "")
+    assert {t.entry.display: t.status for t in res.tracks} == {
+        "Alpha - Free Thing": "downloaded", "Beta - Gated": "gate", "Gamma - Paid One": "beatport"}
+    assert "3 tracks from your setlist" in write_all(res, tmp_path)["html"].read_text()
+
+
+def test_setlist_with_sc_link_uses_the_list(tmp_path: Path):
+    cur = _curator(tmp_path)
+    req = parse_request("https://soundcloud.com/lumberjvck/deep-cuts-007")
+    req.setlist = parse_setlist("Gamma - Paid One")[0]
+    ep = cur.run([req]).episodes[0]
+    assert (ep.label, ep.tracklist_source) == ("Deep Cuts #007", "setlist")
+    assert ep.soundcloud_url.endswith("/deep-cuts-007") and [e.display for e in ep.tracks] == ["Gamma - Paid One"]
+    assert not cur.tl.calls
+
+
+@pytest.fixture
+def cli_run(tmp_path: Path, monkeypatch):
+    """track-curator run ... against the fake sites; returns (exit code, the run's result.json)."""
+    import track_curator.cli as cli
+    import track_curator.pipeline as pipeline
+
+    class FakeCurator(Curator):
+        def __init__(self, opts, http=None, log=print):
+            super().__init__(opts, http=FakeHttp(), log=lambda *_: None)
+            self.sc, self.tl, self.bp = FakeSC(), FakeTL(), FakeBP()
+
+    monkeypatch.setattr(pipeline, "Curator", FakeCurator)
+    monkeypatch.setattr(cli, "Http", lambda **_: FakeHttp())
+
+    def run(*args):
+        before = set(tmp_path.glob("runs/*"))
+        code = cli.main(["run", *args, "--base", str(tmp_path / "runs"), "--no-open"])
+        new = set(tmp_path.glob("runs/*")) - before
+        return code, (json.loads((new.pop() / "result.json").read_text()) if new else None)
+
+    return run
+
+
+def test_cli_names_a_run_after_the_upload_or_the_setlist(cli_run, tmp_path: Path, monkeypatch, capsys):
+    code, data = cli_run("--sc-link", "https://soundcloud.com/lumberjvck/deep-cuts-007")
+    assert code == 0 and data["cart_name"] == "deep_cuts_007" and data["requests"] == []
+    assert [e["label"] for e in data["episodes"]] == ["Deep Cuts #007"]
+    assert list((tmp_path / "runs").glob("*-deep-cuts-007"))
+
+    setlist = tmp_path / "deep cuts 19.txt"
+    setlist.write_text("Tracklist:\nGamma - Paid One\nnot a track\n")
+    code, data = cli_run("--setlist", str(setlist))
+    assert code == 0 and data["cart_name"] == "deep_cuts_19"
+    assert "not a track" in capsys.readouterr().out  # the skipped line is shown
+    code, data = cli_run("[LUMBERJVCK's Deep Cuts, 19]", "--setlist", str(setlist))
+    assert data["cart_name"] == "lumberjvcks_deep_cuts_19"
+    assert data["episodes"][0]["label"] == "LUMBERJVCK's Deep Cuts #19"
+
+    monkeypatch.setattr("sys.stdin", io.StringIO("Gamma - Paid One\n"))
+    code, data = cli_run("--setlist", "-")
+    assert code == 0 and re.fullmatch(r"setlist_\d{4}_\d\d_\d\d_\d{4}", data["cart_name"])
+
+
+def test_cli_setlist_needs_one_set(cli_run, tmp_path: Path):
+    setlist = tmp_path / "s.txt"
+    setlist.write_text("A - B\n")
+    assert cli_run("[A]", "[B]", "--setlist", str(setlist))[0] == 2
+    assert cli_run("[Show, 1-2]", "--sc-link", "https://soundcloud.com/a/b")[0] == 2
+    (tmp_path / "empty.txt").write_text("nothing here\n")
+    assert cli_run("--setlist", str(tmp_path / "empty.txt"))[0] == 2
+    with pytest.raises(SystemExit):
+        cli_run("--setlist", str(setlist), "--tracklist-url", "https://www.1001tracklists.com/tracklist/x.html")
+

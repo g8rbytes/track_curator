@@ -117,13 +117,17 @@ def strip_timestamps(s: str) -> tuple[str, str]:
     return s, ts
 
 
-def parse_line(line: str) -> ParsedLine | None:
+def parse_line(line: str, numbers: bool = True) -> ParsedLine | None:
+    """numbers=False: a leading number followed only by a space ("4 Strings - Day Time") is
+    part of the artist, not a track number."""
     s = _URL.sub("", _EMOJI.sub("", line)).strip()
     if not s:
         return None
     numbered = False
     ts = ""
     m = _PREFIX.match(s)
+    if m and m.group("num") and not numbers and not s[m.end("num"):m.end()].strip():
+        m = None
     if m and m.end() > 0 and (m.group("num") or m.group("ts") or m.group("bnum")):
         numbered = True
         ts = m.group("ts") or ""
@@ -155,20 +159,42 @@ def parse_tracklist(text: str, source: str = "soundcloud") -> list[TrackEntry]:
     lines = text.replace("\r", "").split("\n")
     header_idx = next((i for i, l in enumerate(lines) if _is_header(l)), None)
     start = header_idx + 1 if header_idx is not None else 0
+    entries = _entries(lines[start:], source, listed=header_idx is not None)
+    return entries if len(entries) >= MIN_TRACKS else []
+
+
+def parse_setlist(text: str) -> tuple[list[TrackEntry], list[str]]:
+    """A tracklist the user gave (--setlist): every line that reads as "Artist - Title" is a
+    track, numbered or not, and one track is enough. Anything above a "Tracklist" header is
+    ignored. Returns the tracks and the lines that weren't tracks, so they can be fixed.
+    """
+    lines = text.replace("\r", "").split("\n")
+    header = next((i for i, l in enumerate(lines) if _is_header(l) and parse_line(l) is None), -1)
+    body = [l for l in lines[header + 1:] if l.strip()]
+    parsed = [p for p in map(parse_line, body) if p]
+    # Only a mostly numbered list has track numbers; otherwise "4 Strings - ..." keeps its 4.
+    numbers = 2 * sum(p.numbered for p in parsed) > len(parsed)
+    entries = _entries(body, "setlist", listed=True, numbers=numbers)
+    return entries, [l.strip() for l in body if parse_line(l, numbers) is None]
+
+
+def _entries(lines: list[str], source: str, listed: bool, numbers: bool = True) -> list[TrackEntry]:
+    """Tracklist lines -> entries. listed: the lines are known to be a tracklist (they follow a
+    header, or the user gave them), so un-numbered "Artist - Title" lines count too."""
     entries: list[TrackEntry] = []
     misses = 0
-    for line in lines[start:]:
+    for line in lines:
         if not line.strip():
             continue
-        parsed = parse_line(line)
+        parsed = parse_line(line, numbers)
         if parsed is None:
             if entries:
                 misses += 1
-                if misses >= 3 and header_idx is None:
+                if misses >= 3 and not listed:
                     break
             continue
         artist, title, numbered, layer, ts = parsed
-        if not numbered and not layer and header_idx is None:
+        if not numbered and not layer and not listed:
             continue
         misses = 0
         is_id = is_id_text(title) or (is_id_text(artist) and is_id_text(title))
@@ -184,8 +210,6 @@ def parse_tracklist(text: str, source: str = "soundcloud") -> list[TrackEntry]:
                 timestamp=ts,
             )
         )
-    if len(entries) < MIN_TRACKS:
-        return []
     return entries
 
 

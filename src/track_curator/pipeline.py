@@ -75,15 +75,27 @@ class Curator:
 
     # -- step 1+2: episodes and their tracklists -----------------------------------
     def episodes(self, req: Request) -> list[Episode]:
+        if req.url:
+            self.log(f"Using the SoundCloud upload at {req.url}")
+            ep = find_set(self.sc, req)
+            ep.tracklist_url_1001 = req.url_1001 or ""
+            return [ep]
+        if req.setlist:  # the user gave the tracklist, so there is no set to find
+            n = req.episodes[0] if req.episodes else None
+            return [Episode(label=f"{req.query} #{n}" if n is not None else req.query, number=n)]
         if req.url_1001:
             return [Episode(label=req.url_1001, tracklist_url_1001=req.url_1001)]
         if req.is_series:
             self.log(f"Finding {req.query} episodes {req.episodes[0]}-{req.episodes[-1]} on SoundCloud")
             return find_series(self.sc, req, log=self.log)
-        self.log(f"Finding {req.query or req.url} on SoundCloud")
+        self.log(f"Finding {req.query} on SoundCloud")
         return [find_set(self.sc, req)]
 
     def fill_tracklist(self, ep: Episode, req: Request) -> None:
+        if req.setlist:  # the user's own list: nothing to read or look up
+            ep.tracks, ep.tracklist_source = list(req.setlist), "setlist"
+            self.log(f"  {ep.label}: {len(ep.tracks)} track{'' if len(ep.tracks) == 1 else 's'} from your setlist")
+            return
         sc_tracks = parse_tracklist(ep.description) if ep.description else []
         ratio = id_ratio(sc_tracks)
         tl_tracks: list[TrackEntry] = []

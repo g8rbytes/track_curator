@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from .models import TrackEntry
+
 _RANGE_PART = re.compile(r"^\s*(\d+)\s*(?:-|–|—|\.\.|to)\s*(\d+)\s*$")
 _NUM_PART = re.compile(r"^\s*#?(\d+)\s*$")
 
@@ -22,6 +24,7 @@ class Request:
     episodes: list[int] = field(default_factory=list)  # empty => single set
     url: Optional[str] = None  # explicit SoundCloud URL
     url_1001: Optional[str] = None  # explicit 1001Tracklists URL
+    setlist: list[TrackEntry] = field(default_factory=list)  # the user's own tracklist (--setlist)
 
     @property
     def is_series(self) -> bool:
